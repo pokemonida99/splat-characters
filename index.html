@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Splat 人物試作</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<style>
+/* 版面：全幅 3D 舞台，人物選單浮在底部；單一深色，因為色點模型是為深底訓練的 */
+:root {
+  color-scheme: dark;
+  --stage: #15131c;
+  --ink: #f3eff6;
+  --muted: #a9a3b5;
+  --chip: #2a2733;
+  --chip-on: #f0599a;
+  --chip-on-ink: #1b0a12;
+  --display: "Zen Kaku Gothic New", "Noto Sans TC", "PingFang TC", sans-serif;
+  --body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+}
+html, body { height: 100%; }
+body { margin: 0; background: var(--stage); color: var(--ink); font-family: var(--body); overflow: hidden; }
+#stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+#stage:active { cursor: grabbing; }
+.head {
+  position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0;
+  padding-block: 18px;
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+h1 { margin: 0; font-family: var(--display); font-size: clamp(20px, 3vw, 28px); letter-spacing: .02em; }
+.note { margin: 4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; max-width: 38em; }
+.dock {
+  position: fixed; left: 0; right: 0; bottom: env(safe-area-inset-bottom, 0px);
+  padding-block: 16px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center;
+}
+button {
+  font: inherit; font-size: 14px; color: var(--ink); background: var(--chip);
+  border: 0; border-radius: 999px; padding: 8px 16px; cursor: pointer;
+}
+button[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-ink); font-weight: 700; }
+button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.spin { margin-left: 8px; }
+#status {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  color: var(--muted); font-size: 14px; text-align: center; padding-inline: 16px; pointer-events: none;
+}
+.stats { width: 100%; text-align: center; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+</style>
+
+<canvas id="stage" aria-label="可旋轉的 3D 人物"></canvas>
+<header class="head">
+  <h1>Splat 人物試作</h1>
+  <p class="note">由 AI 生圖的虛構角色製作的 3D Gaussian Splatting。拖曳旋轉，滾輪或雙指縮放。</p>
+</header>
+<div id="status">正在載入模型…</div>
+<nav class="dock" aria-label="選擇人物">
+  <div id="stats" class="stats"></div>
+  <div id="chips" style="display:contents"></div>
+  <button id="spin" class="spin" aria-pressed="true">自動旋轉</button>
+</nav>
+
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/","@sparkjsdev/spark":"https://cdn.jsdelivr.net/npm/@sparkjsdev/spark@2.0.0/dist/spark.module.min.js"}}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
+
+const MODELS = [
+  { id: "boss", label: "老闆", file: "models/boss.ply" },
+  { id: "newcomer", label: "職場新人", file: "models/newcomer.ply" },
+  { id: "pink", label: "粉色西裝", file: "models/pink.ply" },
+  { id: "beret", label: "貝雷帽", file: "models/beret.ply" },
+];
+
+const status = document.getElementById("status");
+const statsEl = document.getElementById("stats");
+const canvas = document.getElementById("stage");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x15131c);
+
+const scene = new THREE.Scene();
+scene.add(new SparkRenderer({ renderer }));
+const camera = new THREE.PerspectiveCamera(26, 1, 0.1, 100);
+camera.position.set(0, 0.1, 5.2);
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 0.05, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 1.2;
+controls.maxDistance = 9;
+controls.autoRotate = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+controls.autoRotateSpeed = 1.4;
+document.getElementById("spin").setAttribute("aria-pressed", String(controls.autoRotate));
+
+let current = null;
+let token = 0;
+const chips = {};
+
+async function show(model) {
+  const mine = ++token;
+  Object.entries(chips).forEach(([id, chip]) => chip.setAttribute("aria-pressed", String(id === model.id)));
+  status.hidden = false;
+  status.textContent = "正在載入「" + model.label + "」…";
+  try {
+    const response = await fetch(model.file);
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (mine !== token) return;
+    const mesh = new SplatMesh({ fileBytes: bytes, fileName: model.id + ".ply" });
+    // 模型是 Z 朝上、面向 -Y；轉成 three.js 的 Y 朝上、面向鏡頭
+    mesh.rotation.x = -Math.PI / 2;
+    await mesh.initialized;
+    if (mine !== token) { mesh.dispose(); return; }
+    if (current) { scene.remove(current); current.dispose(); }
+    current = mesh;
+    scene.add(mesh);
+    status.hidden = true;
+    statsEl.textContent = model.label + "　" + mesh.packedSplats.numSplats.toLocaleString("en-US") + " 個色點";
+  } catch (error) {
+    status.hidden = false;
+    status.textContent = "模型載入失敗：" + error.message + "。請重新整理頁面再試一次。";
+    console.error(error);
+  }
+}
+
+const chipBox = document.getElementById("chips");
+for (const model of MODELS) {
+  const chip = document.createElement("button");
+  chip.textContent = model.label;
+  chip.id = "chip-" + model.id;
+  chip.addEventListener("click", () => show(model));
+  chips[model.id] = chip;
+  chipBox.appendChild(chip);
+}
+document.getElementById("spin").addEventListener("click", (event) => {
+  controls.autoRotate = !controls.autoRotate;
+  event.currentTarget.setAttribute("aria-pressed", String(controls.autoRotate));
+});
+
+function resize() {
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  renderer.setSize(width, height, false);
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", resize);
+resize();
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+});
+show(MODELS[0]);
+</script>
