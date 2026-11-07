@@ -73,6 +73,8 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
 
 const MODELS = [
+  // 特寫模型的鏡頭對齊訓練時的視野與距離；保留原始 PLY，瘦身拿掉隨視角變色的資料後畫質會明顯變差
+  { id: "h3pink", label: "粉色特寫（影片版）", file: "models/h3_pink.ply", distance: 9.5, fov: 21.3 },
   { id: "boss", label: "老闆", file: "models/boss.ply" },
   { id: "newcomer", label: "職場新人", file: "models/newcomer.ply" },
   { id: "pink", label: "粉色西裝", file: "models/pink.ply" },
@@ -122,6 +124,11 @@ async function show(model) {
     if (current) { scene.remove(current); current.dispose(); }
     current = mesh;
     scene.add(mesh);
+    camera.fov = model.fov || 26;
+    camera.updateProjectionMatrix();
+    controls.maxDistance = 14;
+    const direction = camera.position.clone().sub(controls.target).normalize();
+    camera.position.copy(controls.target).addScaledVector(direction, model.distance || 5.2);
     status.hidden = true;
     statsEl.textContent = model.label + "　" + mesh.packedSplats.numSplats.toLocaleString("en-US") + " 個色點";
   } catch (error) {
